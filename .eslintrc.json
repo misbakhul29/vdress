@@ -1,32 +1,7 @@
 {
-  "parser": "@typescript-eslint/parser",
-  "parserOptions": {
-    "ecmaVersion": 2021,
-    "sourceType": "module",
-    "ecmaFeatures": {
-      "jsx": true
-    }
-  },
-  "plugins": [
-    "@typescript-eslint",
-    "react",
-    "react-hooks",
-    "next"
-  ],
-  "extends": [
-    "eslint:recommended",
-    "plugin:@typescript-eslint/recommended",
-    "plugin:react/recommended",
-    "plugin:react-hooks/recommended",
-    "plugin:next/recommended",
-    "next/core-web-vitals"
-  ],
-  "settings": {
-    "react": {
-      "version": "detect"
-    }
-  },
+  "extends": ["next/core-web-vitals"],
   "rules": {
-    // Tambahkan aturan kustom di sini
+    "react/no-unescaped-entities": "off",
+    "@next/next/no-img-element": "off"
   }
 }

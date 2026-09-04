@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import Modal from '@/app/component/modal';
 import Image from 'next/image';
 import { FormEvent } from 'react';
-import sjcl from 'sjcl';
+import { encryptData, decryptData } from '@/lib/crypto';
 import ErrorAlert from '@/app/component/ErrorAlert';
 import React from 'react';
 import { DustItems, User_resources } from '@/app/interface';
@@ -52,12 +52,7 @@ export default function GlamourDustExchange() {
       const response = await fetchApi('getDustItems');
 
       // Decrypt the fetched data
-      const decryptedData = JSON.parse(
-        sjcl.decrypt(
-          process.env.SJCL_PASSWORD ?? 'virtualdressing',
-          response.encryptedData
-        )
-      );
+      const decryptedData = decryptData(response.encryptedData);
 
       // Close the modal and show success message
       setShowModal(false);
@@ -102,9 +97,9 @@ export default function GlamourDustExchange() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          encryptedData: sjcl.encrypt(process.env.SJCL_PASSWORD || 'virtualdressing', JSON.stringify({
+          encryptedData: encryptData({
             uid, typeFetch, ...dataFetch
-          })),
+          }),
         }),
       });
 
@@ -137,7 +132,7 @@ export default function GlamourDustExchange() {
 
       if (response.encryptedData) {
         try {
-          const decryptedData = JSON.parse(sjcl.decrypt(process.env.SJCL_PASSWORD || 'virtualdressing', response.encryptedData));
+          const decryptedData = decryptData(response.encryptedData);
           setDustItems(decryptedData.dustItems);
           console.log('Dust items set:', decryptedData.dustItems); // Log data yang sudah didekripsi
         } catch (decryptionError) {
@@ -161,7 +156,7 @@ export default function GlamourDustExchange() {
         return;
       }
 
-      const encryptedData = sjcl.encrypt(process.env.SJCL_PASSWORD || 'virtualdressing', JSON.stringify({ uid })); // Encrypt the data
+      const encryptedData = encryptData({ uid }); // Encrypt the data
 
       const response = await fetch('/api/inventory', {
         method: 'POST',
@@ -176,7 +171,7 @@ export default function GlamourDustExchange() {
 
       const data = await response.json();
       // Decrypt data if needed (see server-side changes)
-      const decryptedData = JSON.parse(sjcl.decrypt(process.env.SJCL_PASSWORD || 'virtualdressing', data.encryptedData));
+      const decryptedData = decryptData(data.encryptedData);
       const itemNames = decryptedData?.inventory?.map((item: { item_name: any; }) => item.item_name) || [];
 
       setInventoryItemNames(itemNames);

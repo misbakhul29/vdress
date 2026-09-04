@@ -3,9 +3,8 @@ import { useState, useEffect } from 'react';
 import Modal from '@/app/component/modal';
 import Image from 'next/image';
 import { FormEvent } from 'react';
-import sjcl from 'sjcl';
+import { encryptData, decryptData } from '@/lib/crypto';
 import ErrorAlert from '@/app/component/ErrorAlert';
-import React from 'react';
 import { TokenItems, User_resources } from '@/app/interface';
 import { useRefresh } from "@/app/component/RefreshContext";
 import Loading from '@/app/component/Loading';
@@ -48,7 +47,7 @@ export default function TokenShop() {
     try {
       await fetchApi('buyTokenItem', { itemId: selectedItem.id, quantity });
       const response = await fetchApi('getTokenItems');
-      const decryptedData = JSON.parse(sjcl.decrypt(process.env.SJCL_PASSWORD || 'virtualdressing', response.encryptedData));
+      const decryptedData = decryptData(response.encryptedData);
 
       setShowModal(false);
       setExchangeSuccess(true);
@@ -73,13 +72,13 @@ export default function TokenShop() {
       // Add the purchased item to inventoryItemNames
       setInventoryItemNames((prevNames) => {
         if ([1, 2].includes(selectedItem.id)) {
-            return prevNames; // Skip items with id 1 and 2
+          return prevNames; // Skip items with id 1 and 2
         }
         if (prevNames.includes(selectedItem.name)) {
-            return prevNames; // Avoid duplicates
+          return prevNames; // Avoid duplicates
         }
         return [...prevNames, selectedItem.name];
-    });
+      });
 
     } catch (error: any) {
       console.error('Error during purchase:', error);
@@ -95,9 +94,9 @@ export default function TokenShop() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          encryptedData: sjcl.encrypt(process.env.SJCL_PASSWORD || 'virtualdressing', JSON.stringify({
+          encryptedData: encryptData({
             uid, typeFetch, ...dataFetch
-          })),
+          }),
         }),
       });
 
@@ -130,7 +129,7 @@ export default function TokenShop() {
 
       if (response.encryptedData) {
         try {
-          const decryptedData = JSON.parse(sjcl.decrypt(process.env.SJCL_PASSWORD || 'virtualdressing', response.encryptedData));
+          const decryptedData = decryptData(response.encryptedData);
           setTokenItems(decryptedData.tokenItems);
           console.log('Dust items set:', decryptedData.tokenItems); // Log data yang sudah didekripsi
         } catch (decryptionError) {
@@ -154,7 +153,7 @@ export default function TokenShop() {
         return;
       }
 
-      const encryptedData = sjcl.encrypt(process.env.SJCL_PASSWORD || 'virtualdressing', JSON.stringify({ uid })); // Encrypt the data
+      const encryptedData = encryptData({ uid }); // Encrypt the data
 
       const response = await fetch('/api/inventory', {
         method: 'POST',
@@ -169,7 +168,7 @@ export default function TokenShop() {
 
       const data = await response.json();
       // Decrypt data if needed (see server-side changes)
-      const decryptedData = JSON.parse(sjcl.decrypt(process.env.SJCL_PASSWORD || 'virtualdressing', data.encryptedData));
+      const decryptedData = decryptData(data.encryptedData);
       const itemNames = decryptedData?.inventory?.map((item: { item_name: any; }) => item.item_name) || [];
 
       setInventoryItemNames(itemNames);
@@ -257,7 +256,7 @@ export default function TokenShop() {
               {/* Menampilkan status limit dan status sudah dimiliki */}
               <div className="flex flex-col flex-none w-full p-2 bg-amber-500 text-white">
                 <span className="text-xs flex gap-1 items-center justify-center">
-                  {(isItemInInventory && item.id !==1 && item.id !== 2) ? (
+                  {(isItemInInventory && item.id !== 1 && item.id !== 2) ? (
                     <p className="text-xs text-gray-300 text-center">Sudah dimiliki</p>
                   ) : (
                     <>

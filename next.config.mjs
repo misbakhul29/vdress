@@ -4,6 +4,7 @@ const __dirname = path.dirname(new URL(import.meta.url).pathname);
 /** @type {import("next").NextConfig} */
 const nextConfig = {
   reactStrictMode: false,
+  turbopack: {},
   webpack: (config) => {
     config.resolve = {
       ...config.resolve,

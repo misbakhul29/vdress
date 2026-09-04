@@ -1,13 +1,10 @@
-import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
-import sjcl from "sjcl";
-
-const sql = neon(`${process.env.DATABASE_URL}`);
-const password = process.env.SJCL_PASSWORD; // Retrieve password from environment variables
+import prisma from "@/lib/prisma";
+import { decryptData, encryptData } from "@/lib/crypto";
 
 export async function GET() {
   try {
-    const rows = await sql`SELECT * FROM inventory`;
+    const rows = await prisma.inventory.findMany();
 
     if (rows.length > 0) {
       return NextResponse.json(
@@ -54,8 +51,8 @@ export async function POST(req: Request) {
     }
 
     try {
-      const decryptedData = JSON.parse(sjcl.decrypt(password as string, encryptedData));
-      const uid = decryptedData.uid;
+      const decryptedData = decryptData(encryptedData);
+      const uid = decryptedData?.uid;
 
       if (!uid) {
         return NextResponse.json({
@@ -65,8 +62,10 @@ export async function POST(req: Request) {
         }, { status: 400 });
       }
 
-      const rows = await sql`SELECT * FROM inventory WHERE uid = ${uid}`;
-      const encryptedResponse = sjcl.encrypt(password as string, JSON.stringify({ inventory: rows }));
+      const rows = await prisma.inventory.findMany({
+        where: { uid },
+      });
+      const encryptedResponse = encryptData({ inventory: rows });
 
       return NextResponse.json({
         status: "success",

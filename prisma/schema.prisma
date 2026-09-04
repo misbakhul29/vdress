@@ -1,0 +1,210 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// -----------------------------------------------------------------------------
+// Better Auth Core Models
+// -----------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  accounts      Account[]
+
+  // Game/App Relations
+  suited          Suited?
+  userResources   UserResources?
+  inventories     Inventory[]
+  tokenLimits     UserTokenLimit[]
+  dustLimits      UserDustLimit[]
+  gachaHistories  GachaHistory[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  issuer                String    @default("local:credential")
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("account")
+}
+
+model Verification {
+  id         String    @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+
+  @@map("verification")
+}
+
+// -----------------------------------------------------------------------------
+// Application & Game Models
+// -----------------------------------------------------------------------------
+
+model Suited {
+  id  Int    @id @default(autoincrement())
+  uid String @unique
+  a   String @default("default")
+  b   String @default("default")
+  c   String @default("default")
+
+  user User  @relation(fields: [uid], references: [id], onDelete: Cascade)
+
+  @@map("suited")
+}
+
+model UserResources {
+  id                 Int     @id @default(autoincrement())
+  uid                String  @unique
+  chic_coins         Int     @default(0)
+  glamour_gems       Int     @default(0)
+  glamour_dust       Int     @default(0)
+  fashion_tokens     Int     @default(0)
+  shimmering_essence Int     @default(0)
+  glimmering_essence Int     @default(0)
+  pity               Int     @default(0)
+  is_rate            Boolean @default(false)
+  standard_pity      Int     @default(0)
+  neonite            Int     @default(0)
+  chromite           Int     @default(0)
+
+  user User @relation(fields: [uid], references: [id], onDelete: Cascade)
+
+  @@map("user_resources")
+}
+
+model Inventory {
+  id          Int      @id @default(autoincrement())
+  uid         String
+  rarity      String
+  item_name   String
+  part_outfit String
+  layer       String
+  created_at  DateTime @default(now())
+  stat        Json?
+  power       Float?
+
+  user User @relation(fields: [uid], references: [id], onDelete: Cascade)
+
+  @@map("inventory")
+}
+
+model GachaItem {
+  id          Int     @id @default(autoincrement())
+  rarity      String
+  item_name   String
+  part_outfit String
+  rate_up     Boolean @default(false)
+  islimited   Boolean @default(false)
+  layer       String
+  stat        Json?
+  power       Float?
+
+  @@map("gacha_item")
+}
+
+model GachaHistory {
+  id          Int      @id @default(autoincrement())
+  uid         String
+  rarity      String
+  item_name   String
+  part_outfit String
+  gacha_type  String
+  gacha_time  DateTime @default(now())
+
+  user User @relation(fields: [uid], references: [id], onDelete: Cascade)
+
+  @@map("gacha_history")
+}
+
+model Products {
+  id           Int    @id @default(autoincrement())
+  name         String
+  price        Float
+  glamour_gems Int
+
+  @@map("products")
+}
+
+model TokenItems {
+  id          Int    @id @default(autoincrement())
+  name        String
+  description String
+  price       Int
+
+  @@map("token_items")
+}
+
+model DustItems {
+  id          Int    @id @default(autoincrement())
+  name        String
+  description String
+  price       Int
+
+  @@map("dust_items")
+}
+
+model UserTokenLimit {
+  id            Int     @id @default(autoincrement())
+  uid           String
+  item_id       Int
+  limit         Int?
+  initial_limit Int?
+
+  user User @relation(fields: [uid], references: [id], onDelete: Cascade)
+
+  @@map("user_token_limit")
+}
+
+model UserDustLimit {
+  id            Int     @id @default(autoincrement())
+  uid           String
+  item_id       Int
+  limit         Int?
+  initial_limit Int?
+
+  user User @relation(fields: [uid], references: [id], onDelete: Cascade)
+
+  @@map("user_dust_limit")
+}

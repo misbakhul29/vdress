@@ -1,74 +1,45 @@
 'use client'
+
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { jwtDecode } from 'jwt-decode';
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import Backsound from "../component/backsound";
 import PWAInstallPrompt from "../component/PWAInstallPompt";
 import MobileLandingPage from "../component/MobileLandingPage";
+import { authClient } from "@/lib/auth-client";
 
 export default function Layout({
     children,
 }: Readonly<{
     children: React.ReactNode;
 }>) {
-
     const router = useRouter();
-    const [loading, isloading] = useState(true);
     const icon = '/ui/iconVD.svg';
-    const currentUrl = usePathname();
     const [isInstalled, setIsInstalled] = useState<boolean>(false);
     const [isMobile, setIsMobile] = useState(false);
-
-    // Check if user is authenticated
+    const { data: session, isPending } = authClient.useSession();
 
     useEffect(() => {
-        const checkAuth = () => {
-            // Get the session token from local storage
-            const token = localStorage.getItem('token');
-
-            if (!token) {
-                router.push('/'); // Redirect to '/' page if no token found
-            } else {
-                try {
-                    const currentDate = new Date();
-                    // Decode the JWT token
-                    const decodedToken = jwtDecode(token);
-                    // Check if the token is expired
-                    if (decodedToken.exp) {
-                        const isTokenExpired = decodedToken.exp * 1000 < currentDate.getTime();
-                        if (isTokenExpired) {
-                            // Clear expired token from local storage
-                            localStorage.removeItem('token');
-                            router.push('/'); // Redirect to '/' page if token is expired
-                        } else {
-                            router.push(currentUrl); // Redirect to '/main' page if token is valid
-                            isloading(false);
-                        }
-                    }
-                } catch (error) {
-                    // Handle any errors (e.g., invalid token format)
-                    console.error('Error decoding token:', error);
-                    // Clear invalid token from local storage
-                    localStorage.removeItem('token');
-                    router.push('/'); // Redirect to '/' page
-                }
+        if (!isPending) {
+            const uid = localStorage.getItem('uid');
+            if (!session?.user && !uid) {
+                router.push('/login');
+            } else if (session?.user?.id) {
+                localStorage.setItem('uid', session.user.id);
             }
-        };
-
-        checkAuth();
-    }, [router, loading]);
+        }
+    }, [session, isPending, router]);
 
     useEffect(() => {
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/sw.js', {
                 scope: '.'
             }).then(function (registration) {
-                console.log('Laravel PWA: ServiceWorker registration successful with scope: ', registration.scope);
+                console.log('PWA ServiceWorker registered with scope: ', registration.scope);
             }, function (err) {
-                console.log('Laravel PWA: ServiceWorker registration failed: ', err);
+                console.log('PWA ServiceWorker registration failed: ', err);
             });
         }
 
@@ -81,14 +52,16 @@ export default function Layout({
         const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|Windows Phone/i.test(navigator.userAgent);
         setIsMobile(isMobileDevice);
 
-    }, [router, isInstalled, loading]); // Add isLoading to the dependency array
+    }, [isInstalled]);
 
-    // The PWAInstallPrompt component will not be rendered since the user is 
-    // immediately redirected to /login
-    if (loading) {
-        return <div className='absolute flex w-full h-full z-[999] top-0 left-0 justify-center items-center'><Image src={icon} alt="none" width={40} height={40} className='animate-ping' /></div>;
+    if (isPending) {
+        return (
+            <div className='absolute flex w-full h-full z-[999] top-0 left-0 justify-center items-center'>
+                <Image src={icon} alt="loading" width={40} height={40} className='animate-ping' />
+            </div>
+        );
     } else if (isMobile) {
-        return <MobileLandingPage />; // Render the mobile landing page
+        return <MobileLandingPage />;
     } else if (!isInstalled) {
         return <PWAInstallPrompt />;
     }
@@ -98,10 +71,12 @@ export default function Layout({
             <Analytics />
             <SpeedInsights />
             <Backsound />
-            <div className="landscape:hidden lg:hidden pointer-events-none bg-slate-900 text-yellow-600 flex h-screen w-screen items-center justify-center"><p className="animate-pulse text-center font-sans font-bold text-lg ">please rotate your phone to landscape!</p></div>
-            <div className=' portrait:hidden relative flex flex-1 text-white'>
+            <div className="landscape:hidden lg:hidden pointer-events-none bg-slate-900 text-yellow-600 flex h-screen w-screen items-center justify-center">
+                <p className="animate-pulse text-center font-sans font-bold text-lg">please rotate your phone to landscape!</p>
+            </div>
+            <div className='portrait:hidden relative flex flex-1 text-white'>
                 {children}
             </div>
         </div>
-    )
+    );
 }

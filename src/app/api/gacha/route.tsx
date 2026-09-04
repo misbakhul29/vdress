@@ -1,15 +1,13 @@
-import { neon } from '@neondatabase/serverless';
 import { NextResponse } from 'next/server';
-import sjcl from 'sjcl';
-
-const sql = neon(`${process.env.DATABASE_URL}`);
+import prisma from "@/lib/prisma";
+import { decryptData } from "@/lib/crypto";
 
 export async function GET(req: Request) {
     try {
-        const rows = await sql`SELECT * FROM gacha_item`;
+        const rows = await prisma.gachaItem.findMany();
 
-        if (rows) {
-            return NextResponse.json({ status: "success", message: 'Successed getting api data', statusCode: 200 }, { status: 200 });
+        if (rows && rows.length > 0) {
+            return NextResponse.json({ status: "success", message: 'Successed getting api data', statusCode: 200, data: rows }, { status: 200 });
         } else {
             return NextResponse.json({ status: "notFound", message: 'Data not found', errorCode: 404 }, { status: 404 });
         }
@@ -21,115 +19,121 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
     try {
-        const { encryptedData } = await req.json(); // Terima data terenkripsi
+        const { encryptedData } = await req.json();
         console.log("Data terenkripsi yang diterima:", encryptedData);
-        const password = process.env.SJCL_PASSWORD; // Password yang sama dengan di client
 
-        if (!password) {
-            return NextResponse.json({ status: "invalidPassword", message: 'Invalid password', errorCode: 400 }, { status: 400 })
+        let decryptedData: any;
+        try {
+            decryptedData = decryptData(encryptedData);
+        } catch (decryptError) {
+            console.error("Decryption error:", decryptError);
+            return NextResponse.json({ message: "Decryption failed", error: "corrupt" }, { status: 400 });
         }
 
-        // Dekripsi data
-        const decryptedData = JSON.parse(sjcl.decrypt(password as string, encryptedData));
-
-        // Akses data yang sudah didekripsi
-        const { uid, typeFetch, ...data } = decryptedData;
+        const { uid, typeFetch, ...data } = decryptedData || {};
 
         if (!uid || !typeFetch) {
             return NextResponse.json({ message: 'uid and typeFetch are required' }, { status: 400 });
         }
 
         switch (typeFetch) {
-            case 'updateGems':
+            case 'updateGems': {
                 try {
                     const glamourGems = parseInt(data.glamour_gems || '0', 10);
                     if (isNaN(glamourGems)) {
                         return NextResponse.json({ message: 'Invalid glamour_gems value' }, { status: 400 });
                     }
 
-                    // Validasi uid (contoh)
                     if (!uid || uid.length < 3) {
                         return NextResponse.json({ message: 'Invalid uid' }, { status: 400 });
                     }
 
-                    const primoRows = await sql`SELECT glamour_gems FROM user_resources WHERE uid = ${uid}`;
+                    const userRes = await prisma.userResources.findUnique({
+                        where: { uid },
+                    });
 
-                    if (primoRows.length === 0) {
+                    if (!userRes) {
                         return NextResponse.json({ message: 'User resources not found' }, { status: 404 });
                     }
 
-                    const currentGlamourGems = primoRows[0].glamour_gems;
-                    const newGlamourGems = currentGlamourGems - glamourGems;
-                    await sql`UPDATE user_resources SET glamour_gems = ${newGlamourGems} WHERE uid = ${uid}`;
-                    return NextResponse.json({ message: 'glamour_gems updated successfully' }, { status: 200 });
+                    const newGlamourGems = userRes.glamour_gems - glamourGems;
+                    await prisma.userResources.update({
+                        where: { uid },
+                        data: { glamour_gems: newGlamourGems },
+                    });
 
+                    return NextResponse.json({ message: 'glamour_gems updated successfully' }, { status: 200 });
                 } catch (error) {
                     console.error('Error updating glamour_gems:', error);
                     return NextResponse.json({ message: 'Failed to update glamour_gems', error: error }, { status: 500 });
                 }
+            }
 
-            case 'resetPity':
-                const resetRows = await sql`SELECT * FROM user_resources WHERE uid = ${uid}`;
-                if (resetRows.length > 0) {
-                    await sql`UPDATE user_resources SET pity = 0 WHERE uid = ${uid}`;
+            case 'resetPity': {
+                const res = await prisma.userResources.updateMany({
+                    where: { uid },
+                    data: { pity: 0 },
+                });
+                if (res.count > 0) {
                     return NextResponse.json({ message: 'pity updated to 0 successfully' }, { status: 200 });
                 } else {
                     return NextResponse.json({ message: 'user not found' }, { status: 404 });
                 }
+            }
 
-            case 'getAllGachaItems':
-                const gachaItem = await sql`SELECT * FROM gacha_item`;
+            case 'getAllGachaItems': {
+                const gachaItem = await prisma.gachaItem.findMany();
                 if (gachaItem.length > 0) {
                     return NextResponse.json({ gachaItem }, { status: 200 });
                 } else {
-                    return NextResponse.json({ message: 'user not found' }, { status: 404 });
+                    return NextResponse.json({ message: 'items not found' }, { status: 404 });
                 }
+            }
 
-            case 'updateEssence':
+            case 'updateEssence': {
                 try {
                     const { essence, type } = data;
-                    console.log('updateessence data :', essence, type)
+                    console.log('updateessence data :', essence, type);
 
                     if (isNaN(essence)) {
                         return NextResponse.json({ message: 'Invalid essence value' }, { status: 400 });
                     }
 
-                    switch (type) {
-                        case 'limited':
-                            await sql`UPDATE user_resources SET glimmering_essence = glimmering_essence - ${essence} WHERE uid = ${uid}`;
-                            break;
-                        case 'standard':
-                            await sql`UPDATE user_resources SET shimmering_essence = shimmering_essence - ${essence} WHERE uid = ${uid}`;
-                            break;
-                        default:
-                            break;
+                    if (type === 'limited') {
+                        await prisma.userResources.updateMany({
+                            where: { uid },
+                            data: { glimmering_essence: { decrement: Number(essence) } },
+                        });
+                    } else if (type === 'standard') {
+                        await prisma.userResources.updateMany({
+                            where: { uid },
+                            data: { shimmering_essence: { decrement: Number(essence) } },
+                        });
                     }
 
                     return NextResponse.json({ message: `${type} Essence updated successfully` }, { status: 200 });
-
                 } catch (error) {
                     console.error('Error updating Essence:', error);
                     return NextResponse.json({ message: 'Failed to update Essence', error: error }, { status: 500 });
                 }
+            }
 
-            case 'incPity':
+            case 'incPity': {
                 const incPity = parseInt(data.incPity || '0', 10);
                 const typePity = data.type;
-                let updateQuery;
 
                 if (isNaN(incPity)) {
                     return NextResponse.json({ message: 'Invalid incPity value' }, { status: 400 });
                 }
 
-                if (typePity === 'limited') {
-                    updateQuery = sql`UPDATE user_resources SET pity = ${incPity} WHERE uid = ${uid}`;
-                } else {
-                    updateQuery = sql`UPDATE user_resources SET standard_pity = ${incPity} WHERE uid = ${uid}`;
-                }
-
                 try {
-                    const result = await updateQuery;
-                    if (result) {
+                    const dataToUpdate = typePity === 'limited' ? { pity: incPity } : { standard_pity: incPity };
+                    const result = await prisma.userResources.updateMany({
+                        where: { uid },
+                        data: dataToUpdate,
+                    });
+
+                    if (result.count > 0) {
                         return NextResponse.json({ message: 'Pity updated successfully' }, { status: 200 });
                     } else {
                         return NextResponse.json({ message: 'User not found, failed set pity' }, { status: 404 });
@@ -138,17 +142,16 @@ export async function POST(req: Request) {
                     console.error('Error updating pity:', error);
                     return NextResponse.json({ message: 'Failed to update pity' }, { status: 500 });
                 }
+            }
 
-            case 'batchUpInven':
+            case 'batchUpInven': {
                 try {
                     const { items } = data;
 
-                    // Validasi input
                     if (!Array.isArray(items) || items.length === 0) {
                         return NextResponse.json({ message: 'Items array is required and cannot be empty' }, { status: 400 });
                     }
 
-                    // Validasi tiap item dalam array
                     const invalidItems = items.filter(item =>
                         !item.item_name || !item.rarity || !item.part_outfit || !item.layer
                     );
@@ -159,40 +162,33 @@ export async function POST(req: Request) {
                         }, { status: 400 });
                     }
 
-                    // Lakukan batch insert ke database
-                    const values = items.map(item => ({
-                        uid,
-                        rarity: item.rarity,
-                        item_name: item.item_name,
-                        part_outfit: item.part_outfit,
-                        layer: item.layer,
-                        stat: item.stat,
-                        power: item.power,
-                    }));
-
-                    await sql`
-                            INSERT INTO inventory (uid, rarity, item_name, part_outfit, layer, stat, power)
-                            SELECT * FROM json_to_recordset(${JSON.stringify(values)})
-                            AS x(uid UUID, rarity TEXT, item_name TEXT, part_outfit TEXT, layer TEXT, stat JSONB, power NUMERIC);
-                        `;
+                    await prisma.inventory.createMany({
+                        data: items.map(item => ({
+                            uid,
+                            rarity: item.rarity,
+                            item_name: item.item_name,
+                            part_outfit: item.part_outfit,
+                            layer: item.layer,
+                            stat: item.stat ?? undefined,
+                            power: item.power ? parseFloat(item.power) : null,
+                        })),
+                    });
 
                     return NextResponse.json({ message: 'Items pushed successfully' }, { status: 200 });
-
                 } catch (error) {
                     console.error('Error updating inventory:', error);
                     return NextResponse.json({ message: 'Error updating inventory' }, { status: 500 });
                 }
+            }
 
-            case 'batchUpHistory':
+            case 'batchUpHistory': {
                 try {
                     const { items } = data;
 
-                    // Validasi input
                     if (!Array.isArray(items) || items.length === 0) {
                         return NextResponse.json({ message: 'Items array is required and cannot be empty' }, { status: 400 });
                     }
 
-                    // Validasi tiap item dalam array
                     const invalidItems = items.filter(item =>
                         !item.item_name || !item.rarity || !item.part_outfit || !item.gacha_type
                     );
@@ -203,100 +199,125 @@ export async function POST(req: Request) {
                         }, { status: 400 });
                     }
 
-                    // Lakukan batch insert ke database
-                    const values = items.map(item => ({
-                        uid,
-                        rarity: item.rarity,
-                        item_name: item.item_name,
-                        part_outfit: item.part_outfit,
-                        gacha_type: item.gacha_type,
-                    }));
-
-                    await sql`
-                            INSERT INTO gacha_history (uid, rarity, item_name, part_outfit, gacha_type)
-                            SELECT * FROM json_to_recordset(${JSON.stringify(values)})
-                            AS x(uid UUID, rarity TEXT, item_name TEXT, part_outfit TEXT, gacha_type TEXT);
-                        `;
+                    await prisma.gachaHistory.createMany({
+                        data: items.map(item => ({
+                            uid,
+                            rarity: item.rarity,
+                            item_name: item.item_name,
+                            part_outfit: item.part_outfit,
+                            gacha_type: item.gacha_type,
+                        })),
+                    });
 
                     return NextResponse.json({ message: 'Items pushed successfully' }, { status: 200 });
-
                 } catch (error) {
                     console.error('Error updating history:', error);
                     return NextResponse.json({ message: 'Error updating history' }, { status: 500 });
                 }
+            }
 
-
-            case 'getPity':
+            case 'getPity': {
                 try {
-                    const getPityRows = await sql`SELECT pity FROM user_resources WHERE uid = ${uid}`;
+                    const getPityRows = await prisma.userResources.findMany({
+                        where: { uid },
+                        select: { pity: true },
+                    });
                     return NextResponse.json(getPityRows, { status: 200 });
                 } catch (error) {
                     console.error('Error fetching pity:', error);
                     return NextResponse.json({ message: 'Failed to fetch pity', error: error }, { status: 500 });
                 }
+            }
 
-            case 'getStandardPity':
+            case 'getStandardPity': {
                 try {
-                    const getStandardRows = await sql`SELECT standard_pity FROM user_resources WHERE uid = ${uid}`;
+                    const getStandardRows = await prisma.userResources.findMany({
+                        where: { uid },
+                        select: { standard_pity: true },
+                    });
                     return NextResponse.json(getStandardRows, { status: 200 });
                 } catch (error) {
                     console.error('Error fetching pity:', error);
                     return NextResponse.json({ message: 'Failed to fetch pity', error: error }, { status: 500 });
                 }
+            }
 
-            case 'getRateUpItem':
+            case 'getRateUpItem': {
                 const getRarity = data.rarity;
                 if (!getRarity) {
                     return NextResponse.json({ message: 'rarity is required' }, { status: 400 });
                 }
-                const getLimitedRows = await sql`SELECT * FROM gacha_item WHERE rarity = ${getRarity} AND rate_up = true`;
+                const getLimitedRows = await prisma.gachaItem.findMany({
+                    where: { rarity: getRarity, rate_up: true },
+                });
                 return NextResponse.json(getLimitedRows, { status: 200 });
+            }
 
-            case 'getRateOffItem':
+            case 'getRateOffItem': {
                 const getOffRarity = data.rarity;
                 if (!getOffRarity) {
                     return NextResponse.json({ message: 'rarity is required' }, { status: 400 });
                 }
-                const getOffRows = await sql`SELECT * FROM gacha_item WHERE rarity = ${getOffRarity} AND rate_up = false`;
+                const getOffRows = await prisma.gachaItem.findMany({
+                    where: { rarity: getOffRarity, rate_up: false },
+                });
                 return NextResponse.json(getOffRows, { status: 200 });
+            }
 
-            case 'getRateOn':
-                const rateOnRows = await sql`SELECT is_rate FROM user_resources WHERE uid = ${uid}`;
-                return NextResponse.json(rateOnRows[0].is_rate, { status: 200 });
+            case 'getRateOn': {
+                const rateOnRows = await prisma.userResources.findUnique({
+                    where: { uid },
+                    select: { is_rate: true },
+                });
+                return NextResponse.json(rateOnRows?.is_rate ?? false, { status: 200 });
+            }
 
-            case 'setRateOn':
-                await sql`UPDATE user_resources SET is_rate = true WHERE uid = ${uid}`;
+            case 'setRateOn': {
+                await prisma.userResources.updateMany({
+                    where: { uid },
+                    data: { is_rate: true },
+                });
                 return NextResponse.json({ message: 'is_rate set to true successfully' }, { status: 200 });
+            }
 
-            case 'setRateOff':
-                await sql`UPDATE user_resources SET is_rate = false WHERE uid = ${uid}`;
+            case 'setRateOff': {
+                await prisma.userResources.updateMany({
+                    where: { uid },
+                    data: { is_rate: false },
+                });
                 return NextResponse.json({ message: 'is_rate set to false successfully' }, { status: 200 });
+            }
 
-            case 'getGachaItem':
+            case 'getGachaItem': {
                 const getGachaRarity = data.rarity;
                 if (!getGachaRarity) {
                     return NextResponse.json({ message: 'rarity is required' }, { status: 400 });
                 }
-                const getGachaRows = await sql`SELECT * FROM gacha_item WHERE rarity = ${getGachaRarity}`;
+                const getGachaRows = await prisma.gachaItem.findMany({
+                    where: { rarity: getGachaRarity },
+                });
                 return NextResponse.json(getGachaRows, { status: 200 });
+            }
 
-            case 'getStandardItem':
+            case 'getStandardItem': {
                 const rarity = data.rarity;
-                console.log
                 if (!rarity) {
                     return NextResponse.json({ message: 'rarity is required' }, { status: 400 });
                 }
-                const standardRows = await sql`SELECT * FROM gacha_item WHERE rarity = ${rarity} AND isLimited = 'false'`;
+                const standardRows = await prisma.gachaItem.findMany({
+                    where: { rarity, islimited: false },
+                });
                 return NextResponse.json(standardRows, { status: 200 });
+            }
 
-            case 'getUserData':
+            case 'getUserData': {
                 try {
-                    const user = await sql`SELECT * FROM users WHERE uid = ${uid}`;
-                    const inventory = await sql`SELECT * FROM inventory WHERE uid = ${uid}`;
-                    const userResources = await sql`SELECT * FROM user_resources WHERE uid = ${uid}`;
-                    const suited = await sql`SELECT * FROM suited WHERE uid = ${uid}`;
+                    const user = await prisma.user.findUnique({ where: { id: uid } });
+                    const inventory = await prisma.inventory.findMany({ where: { uid } });
+                    const userResources = await prisma.userResources.findMany({ where: { uid } });
+                    const suited = await prisma.suited.findMany({ where: { uid } });
 
-                    if (user.length === 0) {
+                    if (!user) {
                         return NextResponse.json({ message: 'User not found' }, { status: 404 });
                     }
 
@@ -312,78 +333,78 @@ export async function POST(req: Request) {
                     console.error('Error fetching user data:', error);
                     return NextResponse.json({ message: 'Error fetching user data' }, { status: 500 });
                 }
+            }
 
-            case 'getHistory':
+            case 'getHistory': {
                 try {
                     const gacha_type = data.gacha_type;
-                    console.log('gacha type : ', gacha_type);
-                    const history = await sql`SELECT * FROM gacha_history WHERE uid = ${uid} AND gacha_type = ${gacha_type}`;
+                    const history = await prisma.gachaHistory.findMany({
+                        where: { uid, gacha_type },
+                    });
                     return NextResponse.json(history, { status: 200 });
                 } catch (error) {
                     console.error('Error fetching history:', error);
                     return NextResponse.json({ message: 'Error fetching history' }, { status: 500 });
                 }
+            }
 
-            case 'upHistoryA':
+            case 'upHistoryA': {
                 try {
-                    const item_name = data.item_name;
-                    const rarity = data.rarity;
-                    const part_outfit = data.part_outfit;
-                    const gacha_type = data.gacha_type;
+                    const { item_name, rarity, part_outfit, gacha_type } = data;
 
                     if (!item_name || !rarity || !part_outfit || !gacha_type) {
                         return NextResponse.json({ message: 'item_name, rarity, part_outfit, and gacha_type are required' }, { status: 400 });
                     }
-                    await sql`
-                          INSERT INTO gacha_history (uid, rarity, item_name, part_outfit, gacha_type) 
-                          VALUES (${uid}, ${rarity}, ${item_name}, ${part_outfit}, ${gacha_type});
-                        `;
+
+                    await prisma.gachaHistory.create({
+                        data: {
+                            uid,
+                            rarity,
+                            item_name,
+                            part_outfit,
+                            gacha_type,
+                        },
+                    });
 
                     return NextResponse.json({ message: `${item_name} push successfully` }, { status: 200 });
                 } catch (error) {
                     console.error('Error adding history:', error);
                     return NextResponse.json({ message: 'Error adding history' }, { status: 500 });
                 }
+            }
 
-            case 'exchangeGemsForEssence':
+            case 'exchangeGemsForEssence': {
                 try {
                     const type = data.type;
                     const glamourGems = parseInt(data.glamour_gems || '0', 10);
-                    let essence;
+                    let essence: number;
                     if (type === 'glimmering_essence') {
                         essence = parseInt(data.glimmering_essence || '0', 10);
                     } else {
                         essence = parseInt(data.shimmering_essence || '0', 10);
                     }
 
-
                     if (isNaN(glamourGems) || isNaN(essence)) {
                         return NextResponse.json({ message: 'Invalid glamour_gems or essence value' }, { status: 400 });
                     }
 
-                    // 1. Kurangi glamour_gems
-                    await sql`
-                        UPDATE user_resources 
-                        SET glamour_gems = glamour_gems - ${glamourGems} 
-                        WHERE uid = ${uid}
-                      `;
+                    const updateData = type === 'glimmering_essence'
+                        ? { glamour_gems: { decrement: glamourGems }, glimmering_essence: { increment: essence } }
+                        : { glamour_gems: { decrement: glamourGems }, shimmering_essence: { increment: essence } };
 
-                    if (type === 'glimmering_essence') {
-                        // 2. Tambahkan glimmering_essence
-                        await sql`UPDATE user_resources SET glimmering_essence = glimmering_essence + ${essence} WHERE uid = ${uid}`;
-                    } else {
-                        await sql`UPDATE user_resources SET shimmering_essence = shimmering_essence + ${essence} WHERE uid = ${uid}`;
-                    }
-
+                    await prisma.userResources.update({
+                        where: { uid },
+                        data: updateData,
+                    });
 
                     return NextResponse.json({ message: 'Gems exchanged for essence successfully' }, { status: 200 });
-
                 } catch (error) {
                     console.error('Error exchanging gems for essence:', error);
                     return NextResponse.json({ message: 'Failed to exchange gems for essence', error: error }, { status: 500 });
                 }
+            }
 
-            case 'updateGlamourDust':
+            case 'updateGlamourDust': {
                 try {
                     const glamourDust = parseInt(data.glamour_dust || '0', 10);
 
@@ -391,39 +412,37 @@ export async function POST(req: Request) {
                         return NextResponse.json({ message: 'Invalid glamour_dust value' }, { status: 400 });
                     }
 
-                    await sql`
-                        UPDATE user_resources 
-                        SET glamour_dust = glamour_dust + ${glamourDust} 
-                        WHERE uid = ${uid}
-                    `;
+                    await prisma.userResources.update({
+                        where: { uid },
+                        data: { glamour_dust: { increment: glamourDust } },
+                    });
 
                     return NextResponse.json({ message: 'Glamour Dust updated successfully' }, { status: 200 });
-
                 } catch (error) {
                     console.error('Error updating Glamour Dust:', error);
                     return NextResponse.json({ message: 'Failed to update Glamour Dust', error: error }, { status: 500 });
                 }
+            }
 
-            case 'updateFashionTokens':
+            case 'updateFashionTokens': {
                 try {
-                    const glamourDust = parseInt(data.fashion_tokens || '0', 10);
+                    const fashionTokens = parseInt(data.fashion_tokens || '0', 10);
 
-                    if (isNaN(glamourDust)) {
+                    if (isNaN(fashionTokens)) {
                         return NextResponse.json({ message: 'Invalid fashion_tokens value' }, { status: 400 });
                     }
 
-                    await sql`
-                        UPDATE user_resources 
-                        SET fashion_tokens = fashion_tokens + ${glamourDust} 
-                        WHERE uid = ${uid}
-                    `;
+                    await prisma.userResources.update({
+                        where: { uid },
+                        data: { fashion_tokens: { increment: fashionTokens } },
+                    });
 
                     return NextResponse.json({ message: 'fashion_tokens updated successfully' }, { status: 200 });
-
                 } catch (error) {
                     console.error('Error updating fashion_tokens:', error);
                     return NextResponse.json({ message: 'Failed to update fashion_tokens', error: error }, { status: 500 });
                 }
+            }
 
             default:
                 return NextResponse.json({ message: 'Invalid typeFetch' }, { status: 400 });

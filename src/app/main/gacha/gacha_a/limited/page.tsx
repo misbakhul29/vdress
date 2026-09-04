@@ -6,10 +6,10 @@ import GachaButton from "@/app/component/gacha/GachaButton";
 import { Users, GachaItem } from "@/app/interface";
 import Modal from '@/app/component/modal';
 import ErrorAlert from "@/app/component/ErrorAlert";
-import sjcl from 'sjcl';
+import { encryptData } from '@/lib/crypto';
 import { useRefresh } from "@/app/component/RefreshContext"; // Import context
 import Loading from "@/app/component/Loading";
-import { error } from "console";
+import { useSession } from "@/lib/auth-client";
 
 // Define the ResourceInfo type (important!)
 interface ResourceInfo {
@@ -18,6 +18,9 @@ interface ResourceInfo {
 }
 
 const Limited_A = () => {
+    const { data: session } = useSession();
+    const uid = session?.user?.id || (typeof window !== 'undefined' ? localStorage.getItem('uid') : null);
+
     const [userData, setUserData] = useState<Users | null>(null);
     const [gachaItem, setGachaItem] = useState<GachaItem[] | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -41,6 +44,8 @@ const Limited_A = () => {
     const activeTab = 'limited';
 
     useEffect(() => {
+        if (!uid) return;
+
         const fetchData = async () => {
             try {
                 await fetchGachaApi("getUserData", null);
@@ -50,8 +55,8 @@ const Limited_A = () => {
         };
 
         fetchData();
-        fetchAllGachaItems()
-    }, []); // Empty dependency array ensures this runs once on component mount
+        fetchAllGachaItems();
+    }, [uid]); // Jalankan kembali saat uid dari session sudah siap
 
     async function fetchAllGachaItems() {
         try {
@@ -65,18 +70,21 @@ const Limited_A = () => {
 
     const fetchGachaApi = async (typeFetch: string, dataFetch?: any) => {
         try {
-            const uid = localStorage.getItem('uid'); // Pastikan uid tersedia
+            const currentUid = uid || (typeof window !== 'undefined' ? localStorage.getItem('uid') : null);
+
+            if (!currentUid) {
+                console.error("User ID not found in session or storage");
+                return;
+            }
 
             // Gabungkan data yang akan dikirimkan dalam body
             const requestBody = {
-                uid: uid!,
+                uid: currentUid,
                 typeFetch: typeFetch,
                 ...(dataFetch || {}) // Gabungkan dataFetch jika ada
             };
 
-            // Enkripsi data dengan SJCL
-            const password = 'virtualdressing'; // Ganti dengan password yang lebih kuat dan aman
-            const encryptedData = sjcl.encrypt(password, JSON.stringify(requestBody));
+            const encryptedData = encryptData(requestBody);
 
             const response = await fetch('/api/gacha', {
                 method: 'POST',

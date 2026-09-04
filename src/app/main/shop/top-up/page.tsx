@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from "react";
 import Modal from "@/app/component/modal"; // Adjust the path as needed
-import sjcl from "sjcl";
+import { encryptData } from "@/lib/crypto";
 import { useRefresh } from "@/app/component/RefreshContext"; // Import context
 import Loading from "@/app/component/Loading";
 
@@ -86,8 +86,7 @@ export default function TopUp() {
         ...purchaseData,
       };
 
-      const password = process.env.SJCL_PASSWORD || 'virtualdressing';
-      const encryptedData = sjcl.encrypt(password, JSON.stringify(requestBody));
+      const encryptedData = encryptData(requestBody);
 
       const response = await fetch('/api/shop', {
         method: 'POST',

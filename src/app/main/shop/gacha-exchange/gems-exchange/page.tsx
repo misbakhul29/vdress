@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Modal from '@/app/component/modal';
 import Image from 'next/image';
 import { FormEvent } from 'react';
-import sjcl from 'sjcl';
+import { encryptData } from '@/lib/crypto';
 import ErrorAlert from '@/app/component/ErrorAlert';
 import React from 'react';
 import { User_resources } from '@/app/interface';
@@ -46,23 +46,14 @@ export default function GemsExchange() {
     e.preventDefault();
     setError(null);
 
-    if (!essence || typeof essence !== 'number') {
-      return;
-    }
-
-    const dataFetch: FormData = {
-      essence,
-      selectedEssence,
-    };
-
-    console.log(dataFetch)
+    const formData: FormData = { essence, selectedEssence };
 
     try {
-      const response = await fetchApi('exchangeManyGems', dataFetch);
-      console.log('Exchange successful:', response);
-      setExchangeSuccess(true); // Set exchange success state
+      await fetchApi('exchangeManyGems', formData);
+      closeModal();
+      setExchangeSuccess(true);
+      getData(uid);
       refresh();
-      setShowModal(false);
     } catch (error: any) {
       console.error('Error during exchange:', error);
       setError(error.message);
@@ -71,11 +62,7 @@ export default function GemsExchange() {
 
   const fetchApi = async (typeFetch: string, dataFetch?: any) => {
     try {
-      const uid = localStorage.getItem('uid');
-
-      if (!uid) {
-        throw new Error("User ID not found");
-      }
+      if (!uid) throw new Error("User ID not found");
 
       const response = await fetch('/api/shop', {
         method: 'POST',
@@ -83,11 +70,11 @@ export default function GemsExchange() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          encryptedData: sjcl.encrypt(process.env.SJCL_PASSWORD || 'virtualdressing', JSON.stringify({
+          encryptedData: encryptData({
             uid,
             typeFetch: typeFetch,
             ...(dataFetch || {})
-          })),
+          }),
         }),
       });
 

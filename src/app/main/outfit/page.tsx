@@ -7,7 +7,7 @@ import DownloadButton from '@/app/component/DownloadButton';
 import OutfitImage from '@/app/component/outfit/OutfitImage';
 import UnEquip from '@/app/component/outfit/UnEquip';
 import { Inventory, Suited } from '@/app/interface';
-import sjcl from 'sjcl';
+import { encryptData, decryptData } from '@/lib/crypto';
 import Loading from '@/app/component/Loading';
 
 const CanvasComponent: React.FC = () => {
@@ -25,7 +25,6 @@ const CanvasComponent: React.FC = () => {
   const [outfitData, setOutfitData] = useState<Inventory[]>([]);
   const loading = '/ui/iconVD.svg';
   const uid = localStorage.getItem('uid');
-  const password = process.env.SJCL_PASSWORD || 'virtualdressing';
 
   const changeOutfit = (newOutfit: { layer: string, item_name: string }) => {
     setWardrobe((prevWardrobe) => {
@@ -58,24 +57,22 @@ const CanvasComponent: React.FC = () => {
 
   useEffect(() => {
     if (wardrobe) {
-      setTopImage(`/outfit/B/${wardrobe.b}.png`);
-      setBotImage(`/outfit/A/${wardrobe.a}.png`);
-      setFeetImage(`/outfit/C/${wardrobe.c}.png`);
-    } else {
-      console.log('Wardrobe data is not available');
-    }
+      setTopImage(wardrobe.a ? `/character/model/cloth/top/${wardrobe.a}.png` : '');
+      setBotImage(wardrobe.b ? `/character/model/cloth/bot/${wardrobe.b}.png` : '');
+      setFeetImage(wardrobe.c ? `/character/model/cloth/shoes/${wardrobe.c}.png` : '');
 
-    if (topImage && botImage && feetImage) {
-      const cAvatar = avatarRef.current;
-      const catx = cAvatar?.getContext('2d');
-      const cTop = topRef.current;
-      const cttx = cTop?.getContext('2d');
-      const cBottom = bottomRef.current;
-      const cbtx = cBottom?.getContext('2d');
-      const cFeet = feetRef.current;
-      const cftx = cFeet?.getContext('2d');
+      const canvasAvatar = avatarRef.current;
+      const canvasTop = topRef.current;
+      const canvasBottom = bottomRef.current;
+      const canvasFeet = feetRef.current;
 
-      if (!cAvatar || !catx || !cTop || !cttx || !cBottom || !cbtx || !cFeet || !cftx) {
+      const catx = canvasAvatar?.getContext('2d');
+      const cttx = canvasTop?.getContext('2d');
+      const cbtx = canvasBottom?.getContext('2d');
+      const cftx = canvasFeet?.getContext('2d');
+
+      if (!catx || !cttx || !cbtx || !cftx) {
+        console.error('Failed to get canvas context');
         return;
       }
 
@@ -88,7 +85,7 @@ const CanvasComponent: React.FC = () => {
 
       setIsLoading(false);
     } else {
-      console.warn('No outfit image found');
+      console.log('Wardrobe data is not available');
     }
   }, [wardrobe, topImage, botImage, feetImage]);
 
@@ -97,7 +94,7 @@ const CanvasComponent: React.FC = () => {
       const uid = localStorage.getItem('uid');
       if (!uid) throw new Error("User ID not found");
 
-      const encryptedData = sjcl.encrypt(password, JSON.stringify({ action, uid, ...dataFetch }));
+      const encryptedData = encryptData({ action, uid, ...dataFetch });
 
       const response = await fetch('/api/outfit', {
         method: 'POST',
@@ -111,7 +108,7 @@ const CanvasComponent: React.FC = () => {
       }
 
       const responseData = await response.json();
-      const decryptedData = JSON.parse(sjcl.decrypt(password, responseData.encryptedData));
+      const decryptedData = decryptData(responseData.encryptedData);
 
       switch (action) {
         case "getOutfitData":

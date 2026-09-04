@@ -16,7 +16,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "moduleDetection": "force",
-    "jsx": "preserve",
+    "jsx": "react-jsx",
     "incremental": true,
     "plugins": [
       {
@@ -43,8 +43,9 @@
     "public/Core/live2dcubismcore",
     "public/Core/live2dcubismcore.d.ts",
     "public/Core/*.ts",
-    "src/app/main/room/coba.d.ts"
-, "src/app/login/page.tsxaa"  ],
+    "src/app/main/room/coba.d.ts",
+    ".next/dev/types/**/*.ts"
+  ],
   "exclude": [
     "node_modules"
   ]

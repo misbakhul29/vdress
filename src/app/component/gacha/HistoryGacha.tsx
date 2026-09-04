@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { HistoryGachaA } from "@/app/interface";
 import ErrorAlert from "../ErrorAlert";
-import sjcl from "sjcl";
+import { encryptData } from "@/lib/crypto";
 
 const HistoryGacha = ({ gachaType }: { gachaType: string }) => {
   const [gachaList, setGachaList] = useState<HistoryGachaA[]>([]);
@@ -23,11 +23,7 @@ const HistoryGacha = ({ gachaType }: { gachaType: string }) => {
         ...(dataFetch || {})
       };
 
-      const password = 'virtualdressing';
-      if (!password) {
-        throw new Error('SJCL_PASSWORD tidak ditemukan');
-      }
-      const encryptedData = sjcl.encrypt(password, JSON.stringify(requestBody));
+      const encryptedData = encryptData(requestBody);
 
       const response = await fetch('/api/gacha', {
         method: 'POST',

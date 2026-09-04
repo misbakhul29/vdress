@@ -1,4 +1,3 @@
-// app/login/page.tsx
 'use client'
 
 import { useRouter } from 'next/navigation';
@@ -7,42 +6,39 @@ import Link from 'next/link';
 import ModalAlert from '@/app/component/ModalAlert';
 import Image from 'next/image';
 import PWAInstallPrompt from '../component/PWAInstallPompt';
-
-interface FormData {
-  email: string;
-  password: string;
-}
+import { authClient } from '@/lib/auth-client';
+import { loginSchema } from '@/lib/validations/auth';
 
 const Login: React.FC = () => {
-  const [formData, setFormData] = useState<FormData>({ email: '', password: '' });
+  const [formData, setFormData] = useState({ email: '', password: '' });
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const router = useRouter();
   const [isInstalled, setIsInstalled] = useState<boolean>(false);
+  const { data: session, isPending: sessionPending } = authClient.useSession();
 
   useEffect(() => {
-    const checkAuth = async () => {
-      //  Ambil token JWT dari atau cookie
-      const token = localStorage.getItem('token');
-      if (token) {
-        // Jika ada token, redirect ke halaman /main
-        router.push('/main');
-      }
-    };
+    // Jika session aktif ditemukan, redirect ke /main
+    if (session?.user) {
+      localStorage.setItem('uid', session.user.id);
+      router.push('/main');
+    }
 
-    if ((window.matchMedia('(display-mode: fullscreen)').matches) || (window.matchMedia('(display-mode: standalone)').matches)) {
+    if (
+      window.matchMedia('(display-mode: fullscreen)').matches ||
+      window.matchMedia('(display-mode: standalone)').matches
+    ) {
       setIsInstalled(true);
     } else {
       setIsInstalled(false);
     }
-
-    checkAuth();
-  }, [router]);
+  }, [session, router]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData((prevData) => ({
       ...prevData,
-      [name]: value
+      [name]: value,
     }));
   };
 
@@ -50,29 +46,35 @@ const Login: React.FC = () => {
     e.preventDefault();
     setError(null);
 
+    // Client-side validation with Zod
+    const validationResult = loginSchema.safeParse(formData);
+    if (!validationResult.success) {
+      setError(validationResult.error.errors[0]?.message || 'Input tidak valid');
+      return;
+    }
+
+    setIsLoading(true);
+
     try {
-      const res = await fetch('/api/auth', { // Sesuaikan dengan endpoint API Anda
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
+      const res = await authClient.signIn.email({
+        email: formData.email,
+        password: formData.password,
       });
 
-      const data = await res.json();
-
-      if (res.ok) {
-        // Login berhasil
-        localStorage.setItem('token', data.token); // Simpan token di
-        localStorage.setItem('uid', data.user.uid);
+      if (res.error) {
+        setError(res.error.message || 'Login gagal. Periksa kembali email dan password Anda.');
+      } else if (res.data) {
+        // Simpan uid untuk kompatibilitas fitur downstream
+        if (res.data.user?.id) {
+          localStorage.setItem('uid', res.data.user.id);
+        }
         router.push('/main');
-      } else {
-        // Tangani error dari API
-        setError(data.message || 'Login failed');
       }
-    } catch (error) {
-      console.error("Error during sign-in:", error);
-      setError("An unexpected error occurred.");
+    } catch (err) {
+      console.error('Error during sign-in:', err);
+      setError('Terjadi kesalahan koneksi atau server.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -82,7 +84,14 @@ const Login: React.FC = () => {
 
   return (
     <div className='relative flex flex-none w-1/3 flex-col items-center justify-center gap-2'>
-      <Image src="/ui/logo2.svg" alt="logo" className='pointer-events-none select-none' width={200} height={70} priority />
+      <Image
+        src="/ui/logo2.svg"
+        alt="logo"
+        className='pointer-events-none select-none'
+        width={200}
+        height={70}
+        priority
+      />
 
       {/* Modal Alert */}
       {error && (
@@ -106,6 +115,7 @@ const Login: React.FC = () => {
           value={formData.email}
           onChange={handleChange}
           required
+          autoComplete="email"
         />
 
         {/* Password Input */}
@@ -117,19 +127,21 @@ const Login: React.FC = () => {
           value={formData.password}
           onChange={handleChange}
           required
+          autoComplete="current-password"
         />
 
         {/* Buttons */}
         <div className='flex flex-1 gap-2 w-full justify-center items-center'>
-          <Link href="/daftar">
-            <p className="flex-1 bg-transparent border-2 border-white text-white font-bold p-2 rounded-lg hover:bg-white hover:text-green-500 transition-all duration-300">
+          <Link href="/daftar" className="flex-1">
+            <p className="flex-1 text-center bg-transparent border-2 border-white text-white font-bold p-2 rounded-lg hover:bg-white hover:text-green-500 transition-all duration-300">
               DAFTAR
             </p>
           </Link>
           <button
             type="submit"
-            className="flex-1 bg-transparent border-2 border-white text-white font-bold p-2 rounded-lg hover:bg-white hover:text-blue-500 transition-all duration-300">
-            MASUK
+            disabled={isLoading}
+            className="flex-1 bg-transparent border-2 border-white text-white font-bold p-2 rounded-lg hover:bg-white hover:text-blue-500 transition-all duration-300 disabled:opacity-50">
+            {isLoading ? 'MEMUAT...' : 'MASUK'}
           </button>
         </div>
       </form>

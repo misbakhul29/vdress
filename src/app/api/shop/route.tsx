@@ -1,15 +1,10 @@
-import { DustItems, GachaItem, TokenItems, User_resources, UserTokenLimit, UserDustLimit } from "@/app/interface";
-import sjcl from "sjcl";
 import { NextResponse } from "next/server";
-import { neon } from "@neondatabase/serverless";
-import { UUID } from "crypto";
-
-const password = process.env.SJCL_PASSWORD; // Retrieve password from environment variables
-const sql = neon(`${process.env.DATABASE_URL}`);
+import prisma from "@/lib/prisma";
+import { decryptData, encryptData } from "@/lib/crypto";
 
 export async function GET() {
   try {
-    const rows = await sql`SELECT * FROM products`;
+    const rows = await prisma.products.findMany();
     return new NextResponse(JSON.stringify({ message: 'successful', rows }), {
       status: 200,
       headers: {
@@ -25,41 +20,61 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const { encryptedData } = await req.json();
-    const decryptedData = JSON.parse(sjcl.decrypt(password as string, encryptedData));
+    const decryptedData = decryptData(encryptedData);
     const { uid, typeFetch, ...dataFetch } = decryptedData;
 
     switch (typeFetch) {
       case "getUserResource": {
-        const userResources = await sql`SELECT * FROM user_resources WHERE uid = ${uid}`;
+        const userResources = await prisma.userResources.findMany({
+          where: { uid },
+        });
         return NextResponse.json({ message: 'Successful', userResources: userResources || null }, { status: 200 });
       }
 
       case "getTokenItems": {
-        const tokenItems = await sql`SELECT ti.*, utl.limit FROM token_items ti
-        LEFT JOIN user_token_limit utl ON ti.id = utl.item_id AND utl.uid = ${uid}`;
+        const tokenItems = await prisma.tokenItems.findMany();
+        const userTokenLimits = await prisma.userTokenLimit.findMany({
+          where: { uid },
+        });
 
-        const returnData = { tokenItems: tokenItems || [] };
-        const encryptedReturnData = sjcl.encrypt(password as string, JSON.stringify(returnData));
+        const mergedTokenItems = tokenItems.map((ti) => ({
+          ...ti,
+          limit: userTokenLimits.find((utl) => utl.item_id === ti.id)?.limit ?? null,
+        }));
+
+        const returnData = { tokenItems: mergedTokenItems };
+        const encryptedReturnData = encryptData(returnData);
         return NextResponse.json({ message: 'Successful', encryptedData: encryptedReturnData }, { status: 200 });
       }
 
       case "getDustItems": {
-        const dustItems = await sql`
-          SELECT di.*, udl.limit
-          FROM dust_items di
-          LEFT JOIN user_dust_limit udl ON di.id = udl.item_id AND udl.uid = ${uid}
-          ORDER BY di.id`;
+        const dustItems = await prisma.dustItems.findMany({
+          orderBy: { id: 'asc' },
+        });
+        const userDustLimits = await prisma.userDustLimit.findMany({
+          where: { uid },
+        });
 
-        const returnData = { dustItems: dustItems || [] };
-        const encryptedReturnData = sjcl.encrypt(password as string, JSON.stringify(returnData));
+        const mergedDustItems = dustItems.map((di) => ({
+          ...di,
+          limit: userDustLimits.find((udl) => udl.item_id === di.id)?.limit ?? null,
+        }));
+
+        const returnData = { dustItems: mergedDustItems };
+        const encryptedReturnData = encryptData(returnData);
         return NextResponse.json({ message: 'Successful', encryptedData: encryptedReturnData }, { status: 200 });
       }
 
       case "restockTokenItems": {
         try {
-          const tokenLimits = await sql`SELECT * FROM user_token_limit`;
+          const tokenLimits = await prisma.userTokenLimit.findMany();
           for (const limit of tokenLimits) {
-            await sql`UPDATE user_token_limit SET "limit" = initial_limit WHERE id = ${limit.item_id}`;
+            if (limit.initial_limit !== null) {
+              await prisma.userTokenLimit.update({
+                where: { id: limit.id },
+                data: { limit: limit.initial_limit },
+              });
+            }
           }
           return NextResponse.json({ message: 'Token items restocked successfully' }, { status: 200 });
         } catch (error) {
@@ -70,9 +85,14 @@ export async function POST(req: Request) {
 
       case "restockDustItems": {
         try {
-          const dustLimits = await sql`SELECT * FROM user_dust_limit`;
+          const dustLimits = await prisma.userDustLimit.findMany();
           for (const limit of dustLimits) {
-            await sql`UPDATE user_dust_limit SET "limit" = initial_limit WHERE id = ${limit.item_id}`;
+            if (limit.initial_limit !== null) {
+              await prisma.userDustLimit.update({
+                where: { id: limit.id },
+                data: { limit: limit.initial_limit },
+              });
+            }
           }
           return NextResponse.json({ message: 'Dust items restocked successfully' }, { status: 200 });
         } catch (error) {
@@ -85,27 +105,33 @@ export async function POST(req: Request) {
         const { packageId } = dataFetch;
 
         try {
-          const packageInfo: any = await sql`SELECT glamour_gems FROM products WHERE id = ${packageId}`;
-          if (!packageInfo || packageInfo.length === 0) { // Check for empty result
+          const packageInfo = await prisma.products.findUnique({
+            where: { id: Number(packageId) },
+          });
+          if (!packageInfo) {
             return NextResponse.json({ message: 'Package not found' }, { status: 404 });
           }
-          const gemsToAdd = packageInfo[0].glamour_gems; // Access the first element of the result array
+          const gemsToAdd = packageInfo.glamour_gems;
 
-          const userResources: any = await sql`SELECT glamour_gems FROM user_resources WHERE uid = ${uid}`;
-          if (!userResources || userResources.length === 0) { // Check for empty result
+          const userResources = await prisma.userResources.findUnique({
+            where: { uid },
+          });
+          if (!userResources) {
             return NextResponse.json({ error: 'User resources not found' }, { status: 404 });
           }
-          const currentGems = userResources[0].glamour_gems; // Access the first element of the result array
-
+          const currentGems = userResources.glamour_gems;
           const newGems = currentGems + gemsToAdd;
 
-          await sql`UPDATE user_resources SET glamour_gems = ${newGems} WHERE uid = ${uid}`;
+          await prisma.userResources.update({
+            where: { uid },
+            data: { glamour_gems: newGems },
+          });
 
           return NextResponse.json({ message: 'Top-up successful', newGems }, { status: 200 });
 
         } catch (error) {
-          console.error("Error during top-up:", error); // Log the full error to the console
-          return NextResponse.json({ error: 'An error occurred during top-up' }, { status: 500 }); // Return a generic error to the client
+          console.error("Error during top-up:", error);
+          return NextResponse.json({ error: 'An error occurred during top-up' }, { status: 500 });
         }
       }
 
@@ -113,20 +139,20 @@ export async function POST(req: Request) {
         const { essence, selectedEssence } = dataFetch;
 
         try {
-          const userResources: any = await sql`SELECT * FROM user_resources WHERE uid = ${uid}`;
-          if (!userResources || userResources.length === 0) {
+          const resources = await prisma.userResources.findUnique({
+            where: { uid },
+          });
+          if (!resources) {
             return NextResponse.json({ message: 'User resources not found' }, { status: 404 });
           }
-
-          const resources = userResources[0]; // Access the first element of the result
 
           if (resources.glamour_gems < 160 * essence) {
             return NextResponse.json({ message: 'Not enough glamour gems' }, { status: 400 });
           }
 
-          let updatedGlamourGems: Number = resources.glamour_gems - (160 * essence);
-          let updatedShimmeringEssence: Number = resources.shimmering_essence;
-          let updatedGlimmeringEssence: Number = resources.glimmering_essence;
+          const updatedGlamourGems = resources.glamour_gems - (160 * essence);
+          let updatedShimmeringEssence = resources.shimmering_essence;
+          let updatedGlimmeringEssence = resources.glimmering_essence;
 
           if (selectedEssence === "shimmering_essence") {
             updatedShimmeringEssence += essence;
@@ -136,15 +162,14 @@ export async function POST(req: Request) {
             return NextResponse.json({ message: 'Invalid essence type' }, { status: 400 });
           }
 
-          console.log(updatedGlamourGems, updatedGlamourGems, updatedGlimmeringEssence, uid)
-
-          const updateResult = await sql`
-                UPDATE user_resources 
-                SET glamour_gems = ${updatedGlamourGems}, 
-                    shimmering_essence = ${updatedGlamourGems}, 
-                    glimmering_essence = ${updatedGlimmeringEssence} 
-                WHERE uid = ${uid}
-            `;
+          await prisma.userResources.update({
+            where: { uid },
+            data: {
+              glamour_gems: updatedGlamourGems,
+              shimmering_essence: updatedShimmeringEssence,
+              glimmering_essence: updatedGlimmeringEssence,
+            },
+          });
 
           return NextResponse.json({ message: 'Essence exchange successful' }, { status: 200 });
 
@@ -162,87 +187,84 @@ export async function POST(req: Request) {
         }
 
         try {
-          await sql`BEGIN`;
-
-          // Fetch item details
-          const item: any = await sql`
-            SELECT id, name, price 
-            FROM token_items 
-            WHERE id = ${itemId}
-          `;
-          console.log('item : ', item)
-          if (!item) {
-            await sql`ROLLBACK`;
-            return NextResponse.json({ message: "Item not found" }, { status: 404 });
-          }
-
-          // Fetch user resources
-          const userResources: any = await sql`
-            SELECT fashion_tokens, shimmering_essence, glimmering_essence 
-            FROM user_resources 
-            WHERE uid = ${uid}
-          `;
-          if (!userResources) {
-            await sql`ROLLBACK`;
-            return NextResponse.json({ message: "User resources not found" }, { status: 404 });
-          }
-
-          // Fetch user purchase limit
-          const userLimit: any = await sql`
-            SELECT "limit", id 
-            FROM user_token_limit 
-            WHERE uid = ${uid} AND item_id = ${itemId}
-          `;
-          if (userLimit && userLimit.limit !== null && userLimit.limit < quantity) {
-            await sql`ROLLBACK`;
-            return NextResponse.json({ message: "Purchase limit exceeded" }, { status: 400 });
-          }
-
-          // Check if user has enough tokens
-          const totalPrice = item[0].price * quantity;
-          if (userResources[0].fashion_tokens < totalPrice) {
-            await sql`ROLLBACK`;
-            return NextResponse.json({ message: "Not enough fashion tokens" }, { status: 400 });
-          }
-
-          const newTokens = userResources[0].fashion_tokens - totalPrice;
-          await sql`UPDATE user_resources SET fashion_tokens = ${newTokens} WHERE uid = ${uid}`;
-
-          if (itemId === 1) {
-            const newShimmeringEssence = userResources[0].shimmering_essence + quantity;
-            await sql`UPDATE user_resources SET shimmering_essence = ${newShimmeringEssence} WHERE uid = ${uid}`;
-          } else if (itemId === 2) {
-            const newGlimmeringEssence = userResources[0].glimmering_essence + quantity;
-            await sql`UPDATE user_resources SET glimmering_essence = ${newGlimmeringEssence} WHERE uid = ${uid}`;
-          } else {
-            const gachaItem: any = await sql`
-            SELECT rarity, item_name, part_outfit, layer 
-            FROM gacha_item 
-            WHERE item_name = ${item[0].name}
-          `;
-            console.log("gachaItem : ", gachaItem)
-            if (gachaItem.length < 0) {
-              await sql`ROLLBACK`;
-              return NextResponse.json({ message: "Gacha item not found" }, { status: 404 });
+          const result = await prisma.$transaction(async (tx) => {
+            const item = await tx.tokenItems.findUnique({
+              where: { id: Number(itemId) },
+            });
+            if (!item) {
+              throw new Error("Item not found");
             }
 
-            await sql`
-            INSERT INTO inventory (uid, rarity, item_name, part_outfit, layer)
-            VALUES (${uid}, ${gachaItem[0].rarity}, ${gachaItem[0].item_name}, ${gachaItem[0].part_outfit}, ${gachaItem[0].layer})
-          `;
-          }
+            const userResources = await tx.userResources.findUnique({
+              where: { uid },
+            });
+            if (!userResources) {
+              throw new Error("User resources not found");
+            }
 
-          if (itemId !== 1 && itemId !== 2) {
-            const updatedUserLimit = userLimit[0].limit - quantity;
-            await sql`UPDATE user_token_limit SET "limit" = ${updatedUserLimit} WHERE id = ${userLimit[0].id}`;
-          }
+            const userLimit = await tx.userTokenLimit.findFirst({
+              where: { uid, item_id: Number(itemId) },
+            });
+            if (userLimit && userLimit.limit !== null && userLimit.limit < quantity) {
+              throw new Error("Purchase limit exceeded");
+            }
 
-          await sql`COMMIT`;
+            const totalPrice = item.price * quantity;
+            if (userResources.fashion_tokens < totalPrice) {
+              throw new Error("Not enough fashion tokens");
+            }
+
+            const newTokens = userResources.fashion_tokens - totalPrice;
+            let newShimmering = userResources.shimmering_essence;
+            let newGlimmering = userResources.glimmering_essence;
+
+            if (Number(itemId) === 1) {
+              newShimmering += quantity;
+            } else if (Number(itemId) === 2) {
+              newGlimmering += quantity;
+            } else {
+              const gachaItem = await tx.gachaItem.findFirst({
+                where: { item_name: item.name },
+              });
+              if (!gachaItem) {
+                throw new Error("Gacha item not found");
+              }
+
+              await tx.inventory.create({
+                data: {
+                  uid,
+                  rarity: gachaItem.rarity,
+                  item_name: gachaItem.item_name,
+                  part_outfit: gachaItem.part_outfit,
+                  layer: gachaItem.layer,
+                },
+              });
+            }
+
+            await tx.userResources.update({
+              where: { uid },
+              data: {
+                fashion_tokens: newTokens,
+                shimmering_essence: newShimmering,
+                glimmering_essence: newGlimmering,
+              },
+            });
+
+            if (Number(itemId) !== 1 && Number(itemId) !== 2 && userLimit && userLimit.limit !== null) {
+              await tx.userTokenLimit.update({
+                where: { id: userLimit.id },
+                data: { limit: userLimit.limit - quantity },
+              });
+            }
+
+            return true;
+          });
+
           return NextResponse.json({ message: 'Purchase successful' }, { status: 200 });
-        } catch (error) {
-          await sql`ROLLBACK`;
+        } catch (error: any) {
           console.error('Database error during purchase:', error);
-          return NextResponse.json({ message: 'Purchase failed' }, { status: 500 });
+          const status = error.message === "Item not found" || error.message === "User resources not found" ? 404 : 400;
+          return NextResponse.json({ message: error.message || 'Purchase failed' }, { status });
         }
       }
 
@@ -254,85 +276,84 @@ export async function POST(req: Request) {
         }
 
         try {
-          await sql`BEGIN`;
-
-          // Fetch item details
-          const item: any = await sql`
-                  SELECT id, name, price 
-                  FROM dust_items 
-                  WHERE id = ${itemId}
-                `;
-          console.log('item : ', item)
-          if (!item) {
-            await sql`ROLLBACK`;
-            return NextResponse.json({ message: "Item not found" }, { status: 404 });
-          }
-
-          // Fetch user resources
-          const userResources: any = await sql`
-                  SELECT glamour_dust, shimmering_essence, glimmering_essence 
-                  FROM user_resources 
-                  WHERE uid = ${uid}
-                `;
-          if (!userResources) {
-            await sql`ROLLBACK`;
-            return NextResponse.json({ message: "User resources not found" }, { status: 404 });
-          }
-
-          // Fetch user purchase limit
-          const userLimit: any = await sql`
-                  SELECT "limit", id 
-                  FROM user_dust_limit 
-                  WHERE uid = ${uid} AND item_id = ${itemId}
-                `;
-          if (userLimit && userLimit.limit !== null && userLimit.limit < quantity) {
-            await sql`ROLLBACK`;
-            return NextResponse.json({ message: "Purchase limit exceeded" }, { status: 400 });
-          }
-
-          // Check if user has enough tokens
-          const totalPrice = item[0].price * quantity;
-          if (userResources[0].glamour_dust < totalPrice) {
-            await sql`ROLLBACK`;
-            return NextResponse.json({ message: "Not enough glamour gust" }, { status: 400 });
-          }
-
-          const newTokens = userResources[0].glamour_dust - totalPrice;
-          await sql`UPDATE user_resources SET glamour_dust = ${newTokens} WHERE uid = ${uid}`;
-
-          if (itemId === 1) {
-            const newShimmeringEssence = userResources[0].shimmering_essence + quantity;
-            await sql`UPDATE user_resources SET shimmering_essence = ${newShimmeringEssence} WHERE uid = ${uid}`;
-          } else if (itemId === 2) {
-            const newGlimmeringEssence = userResources[0].glimmering_essence + quantity;
-            await sql`UPDATE user_resources SET glimmering_essence = ${newGlimmeringEssence} WHERE uid = ${uid}`;
-          } else {
-            const gachaItem: any = await sql`
-                  SELECT rarity, item_name, part_outfit, layer 
-                  FROM gacha_item 
-                  WHERE item_name = ${item[0].name}
-                `;
-            console.log("gachaItem : ", gachaItem)
-            if (gachaItem.length < 0) {
-              await sql`ROLLBACK`;
-              return NextResponse.json({ message: "Gacha item not found" }, { status: 404 });
+          await prisma.$transaction(async (tx) => {
+            const item = await tx.dustItems.findUnique({
+              where: { id: Number(itemId) },
+            });
+            if (!item) {
+              throw new Error("Item not found");
             }
 
-            await sql`
-                  INSERT INTO inventory (uid, rarity, item_name, part_outfit, layer)
-                  VALUES (${uid}, ${gachaItem[0].rarity}, ${gachaItem[0].item_name}, ${gachaItem[0].part_outfit}, ${gachaItem[0].layer})
-                `;
-          }
+            const userResources = await tx.userResources.findUnique({
+              where: { uid },
+            });
+            if (!userResources) {
+              throw new Error("User resources not found");
+            }
 
-          const updatedUserLimit = userLimit[0].limit - quantity;
-          await sql`UPDATE user_dust_limit SET "limit" = ${updatedUserLimit} WHERE id = ${userLimit[0].id}`;
+            const userLimit = await tx.userDustLimit.findFirst({
+              where: { uid, item_id: Number(itemId) },
+            });
+            if (userLimit && userLimit.limit !== null && userLimit.limit < quantity) {
+              throw new Error("Purchase limit exceeded");
+            }
 
-          await sql`COMMIT`;
+            const totalPrice = item.price * quantity;
+            if (userResources.glamour_dust < totalPrice) {
+              throw new Error("Not enough glamour dust");
+            }
+
+            const newTokens = userResources.glamour_dust - totalPrice;
+            let newShimmering = userResources.shimmering_essence;
+            let newGlimmering = userResources.glimmering_essence;
+
+            if (Number(itemId) === 1) {
+              newShimmering += quantity;
+            } else if (Number(itemId) === 2) {
+              newGlimmering += quantity;
+            } else {
+              const gachaItem = await tx.gachaItem.findFirst({
+                where: { item_name: item.name },
+              });
+              if (!gachaItem) {
+                throw new Error("Gacha item not found");
+              }
+
+              await tx.inventory.create({
+                data: {
+                  uid,
+                  rarity: gachaItem.rarity,
+                  item_name: gachaItem.item_name,
+                  part_outfit: gachaItem.part_outfit,
+                  layer: gachaItem.layer,
+                },
+              });
+            }
+
+            await tx.userResources.update({
+              where: { uid },
+              data: {
+                glamour_dust: newTokens,
+                shimmering_essence: newShimmering,
+                glimmering_essence: newGlimmering,
+              },
+            });
+
+            if (Number(itemId) !== 1 && Number(itemId) !== 2 && userLimit && userLimit.limit !== null) {
+              await tx.userDustLimit.update({
+                where: { id: userLimit.id },
+                data: { limit: userLimit.limit - quantity },
+              });
+            }
+
+            return true;
+          });
+
           return NextResponse.json({ message: 'Purchase successful' }, { status: 200 });
-        } catch (error) {
-          await sql`ROLLBACK`;
+        } catch (error: any) {
           console.error('Database error during purchase:', error);
-          return NextResponse.json({ message: 'Purchase failed' }, { status: 500 });
+          const status = error.message === "Item not found" || error.message === "User resources not found" ? 404 : 400;
+          return NextResponse.json({ message: error.message || 'Purchase failed' }, { status });
         }
       }
 

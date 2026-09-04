@@ -1,19 +1,23 @@
-import { neon } from '@neondatabase/serverless';
-import { Params } from 'next/dist/server/request/params';
 import { NextRequest, NextResponse } from 'next/server';
-
-const sql = neon(`${process.env.DATABASE_URL}`);
+import prisma from "@/lib/prisma";
 
 export async function POST(req: NextRequest) {
   try {
     const { uid } = await req.json();
-    const rows: any  = await sql`SELECT * FROM user_resources WHERE uid = ${uid}`;
 
-    if (rows) {
+    if (!uid) {
+      return NextResponse.json({ message: 'UID is required' }, { status: 400 });
+    }
+
+    const row = await prisma.userResources.findUnique({
+      where: { uid },
+    });
+
+    if (row) {
       return NextResponse.json({
         status: "success",
         message: "user resources retrieved successfully",
-        data: rows[0],
+        data: row,
         statusCode: 200,
       }, { status: 200 });
     } else {
