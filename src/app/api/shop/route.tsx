@@ -37,9 +37,9 @@ export async function POST(req: Request) {
           where: { uid },
         });
 
-        const mergedTokenItems = tokenItems.map((ti) => ({
+        const mergedTokenItems = tokenItems.map((ti: any) => ({
           ...ti,
-          limit: userTokenLimits.find((utl) => utl.item_id === ti.id)?.limit ?? null,
+          limit: userTokenLimits.find((utl: any) => utl.item_id === ti.id)?.limit ?? null,
         }));
 
         const returnData = { tokenItems: mergedTokenItems };
@@ -55,9 +55,9 @@ export async function POST(req: Request) {
           where: { uid },
         });
 
-        const mergedDustItems = dustItems.map((di) => ({
+        const mergedDustItems = dustItems.map((di: any) => ({
           ...di,
-          limit: userDustLimits.find((udl) => udl.item_id === di.id)?.limit ?? null,
+          limit: userDustLimits.find((udl: any) => udl.item_id === di.id)?.limit ?? null,
         }));
 
         const returnData = { dustItems: mergedDustItems };
@@ -187,7 +187,7 @@ export async function POST(req: Request) {
         }
 
         try {
-          const result = await prisma.$transaction(async (tx) => {
+          const result = await prisma.$transaction(async (tx: any) => {
             const item = await tx.tokenItems.findUnique({
               where: { id: Number(itemId) },
             });
@@ -276,7 +276,7 @@ export async function POST(req: Request) {
         }
 
         try {
-          await prisma.$transaction(async (tx) => {
+          await prisma.$transaction(async (tx: any) => {
             const item = await tx.dustItems.findUnique({
               where: { id: Number(itemId) },
             });
